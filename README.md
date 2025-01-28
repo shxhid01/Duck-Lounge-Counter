@@ -70,10 +70,6 @@ The system sends notifications for:
 - Counter resets
 - Error states
 
-### LED Indicators
-
-- Built-in LED flashes on motion detection
-- Solid LED indicates system stopped
 
 ## Counter Logic
 
