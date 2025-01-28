@@ -1,93 +1,169 @@
-int pirPin1 = 16;   // D0 - First sensor
-int pirPin2 = 5;    // D1 - Second sensor
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h> // For creating JSON payloads
 
+// PIR Sensor Pins
+int pirPin1 = 16; // D0 - First sensor
+int pirPin2 = 5;  // D1 - Second sensor
+
+// Replace with your network credentials
+const char *ssid = "";     // Your WiFi SSID (network name)
+const char *password = ""; // Your WiFi password
+
+// Discord Webhook URL
+const char *discordWebhookURL = "";
+
+// Motion detection variables
 int motionStatus1 = 0;
 int motionStatus2 = 0;
-
 int pirState1 = LOW;
 int pirState2 = LOW;
-
 int counter = 0; // Counter to be incremented or decremented
 
 unsigned long lastMotionTime1 = 0;
 unsigned long lastMotionTime2 = 0;
+const unsigned long debounceDelay = 2000; // 2 seconds
+unsigned long disableTime1 = 0;
+unsigned long disableTime2 = 0;
+const unsigned long disableDuration = 2000; // 2 seconds
 
-unsigned long debounceDelay = 2000;  // Delay in milliseconds to filter noise
-unsigned long disableTime = 0;      // Time to disable the opposite sensor
-unsigned long disableDuration = 2000; // Duration to disable the other sensor (2 seconds)
+String inputString = ""; // For serial input
 
-String inputString = "";  // Declare the inputString variable
+// Function to send data to Discord
+void sendToDiscord(String message)
+{
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    WiFiClientSecure client; // Use WiFiClientSecure instead of WiFiClient
+    client.setInsecure();    // Skip certificate verification
+    HTTPClient http;
 
-void setup() {
+    // Create JSON payload
+    StaticJsonDocument<200> jsonPayload;
+    jsonPayload["content"] = message;
+    jsonPayload["username"] = "Motion Sensor Bot";
+
+    String payload;
+    serializeJson(jsonPayload, payload);
+
+    // Send POST request to Discord webhook
+    http.begin(client, discordWebhookURL); // Use the secure client
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("User-Agent", "ESP8266");
+
+    int httpResponseCode = http.POST(payload);
+
+    if (httpResponseCode > 0)
+    {
+      String response = http.getString();
+      Serial.print("Discord response code: ");
+      Serial.println(httpResponseCode);
+      Serial.print("Response: ");
+      Serial.println(response);
+    }
+    else
+    {
+      Serial.print("Error sending to Discord. Error: ");
+      Serial.println(http.errorToString(httpResponseCode));
+    }
+
+    http.end();
+  }
+  else
+  {
+    Serial.println("WiFi not connected");
+  }
+}
+
+void handleSensor(int pirPin, int &motionStatus, int &pirState, unsigned long &lastMotionTime, unsigned long &disableTime, bool &sensorDisabled, int counterDelta, String sensorName)
+{
+  unsigned long currentMillis = millis();
+
+  if (!sensorDisabled)
+  {
+    motionStatus = digitalRead(pirPin);
+
+    if (motionStatus == HIGH && pirState == LOW && (currentMillis - lastMotionTime) > debounceDelay)
+    {
+      Serial.println("Motion Detected on " + sensorName);
+      pirState = HIGH;
+      counter += counterDelta;
+      Serial.print("Counter: ");
+      Serial.println(counter);
+      lastMotionTime = currentMillis;
+
+      // Send message to Discord
+      sendToDiscord("🚶 Motion Detected on " + sensorName + ". Counter: " + String(counter));
+
+      // Disable the other sensor
+      if (pirPin == pirPin1)
+      {
+        disableTime2 = currentMillis;
+      }
+      else
+      {
+        disableTime1 = currentMillis;
+      }
+    }
+    else if (motionStatus == LOW && pirState == HIGH && (currentMillis - lastMotionTime) > debounceDelay)
+    {
+      Serial.println("Motion Ended on " + sensorName);
+      pirState = LOW;
+      lastMotionTime = currentMillis;
+
+      // Send message to Discord
+      sendToDiscord("✅ Motion Ended on " + sensorName + ". Counter: " + String(counter));
+    }
+  }
+}
+
+void setup()
+{
+  // Connect to Wi-Fi
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi...");
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi");
+
+  // Initialize PIR pins
   pinMode(pirPin1, INPUT);
   pinMode(pirPin2, INPUT);
-  Serial.begin(115200);
   delay(3000); // Allow PIR sensors to stabilize
 }
 
-void loop() {
+void loop()
+{
   unsigned long currentMillis = millis();
 
-  // Check if the second sensor is disabled
-  bool sensor2Disabled = (currentMillis - disableTime < disableDuration);
-  
-  // Check if the first sensor is disabled
-  bool sensor1Disabled = (currentMillis - disableTime < disableDuration);
+  // Check if sensors are disabled
+  bool sensor1Disabled = (currentMillis - disableTime1 < disableDuration);
+  bool sensor2Disabled = (currentMillis - disableTime2 < disableDuration);
 
-  // Read sensor 1 if it is not disabled
-  if (!sensor2Disabled) {
-    motionStatus1 = digitalRead(pirPin1);
-    // Check for motion on the first sensor with debounce
-    if (motionStatus1 == HIGH && pirState1 == LOW && (currentMillis - lastMotionTime1) > debounceDelay) {
-      Serial.println("Motion Detected on Sensor 1");
-      pirState1 = HIGH;
-      counter++;  // Increment counter when sensor 1 detects motion
-      Serial.print("Counter: ");
-      Serial.println(counter);
-      lastMotionTime1 = currentMillis; // Update last motion time
+  // Handle sensor 1
+  handleSensor(pirPin1, motionStatus1, pirState1, lastMotionTime1, disableTime2, sensor2Disabled, 1, "Sensor 1");
 
-      // Disable sensor 2 for a duration
-      disableTime = currentMillis;
-    } else if (motionStatus1 == LOW && pirState1 == HIGH && (currentMillis - lastMotionTime1) > debounceDelay) {
-      Serial.println("Motion Ended on Sensor 1");
-      pirState1 = LOW;
-      lastMotionTime1 = currentMillis; // Update last motion time
-    }
-  }
+  // Handle sensor 2
+  handleSensor(pirPin2, motionStatus2, pirState2, lastMotionTime2, disableTime1, sensor1Disabled, -1, "Sensor 2");
 
-  // Read sensor 2 if it is not disabled
-  if (!sensor1Disabled) {
-    motionStatus2 = digitalRead(pirPin2);
-    // Check for motion on the second sensor with debounce
-    if (motionStatus2 == HIGH && pirState2 == LOW && (currentMillis - lastMotionTime2) > debounceDelay) {
-      Serial.println("Motion Detected on Sensor 2");
-      pirState2 = HIGH;
-      if (counter > 0) {
-        counter--;  // Decrement counter when sensor 2 detects motion, but ensure counter doesn't go below zero
-      }
-      Serial.print("Counter: ");
-      Serial.println(counter);
-      lastMotionTime2 = currentMillis; // Update last motion time
+  // Handle serial input for reset
+  if (Serial.available() > 0)
+  {
+    inputString = Serial.readStringUntil('\n');
+    inputString.trim();
 
-      // Disable sensor 1 for a duration
-      disableTime = currentMillis;
-    } else if (motionStatus2 == LOW && pirState2 == HIGH && (currentMillis - lastMotionTime2) > debounceDelay) {
-      Serial.println("Motion Ended on Sensor 2");
-      pirState2 = LOW;
-      lastMotionTime2 = currentMillis; // Update last motion time
-    }
-  }
-  
-  // Read serial input and reset counter if "RESET" message is received
-  if (Serial.available() > 0) {
-    char incomingChar = Serial.read();
-    inputString += incomingChar;
-
-    // If the incoming message is "RESET", reset the counter
-    if (inputString.endsWith("RESET")) {
-      counter = 0;  // Reset the counter
+    if (inputString.equalsIgnoreCase("reset"))
+    {
+      counter = 0;
       Serial.println("Counter has been reset.");
-      inputString = ""; // Clear the input string
+      sendToDiscord("🔄 Counter has been reset.");
     }
+    inputString = "";
   }
 }
