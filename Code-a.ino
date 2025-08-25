@@ -77,7 +77,7 @@ void sendToDiscord(String message)
   }
 }
 
-void handleSensor(int pirPin, int &motionStatus, int &pirState, unsigned long &lastMotionTime, unsigned long &disableTime, bool &sensorDisabled, int counterDelta, String sensorName)
+void handleSensor(int pirPin, int &motionStatus, int &pirState, unsigned long &lastMotionTime, bool sensorDisabled, int counterDelta, const String &sensorName)
 {
   unsigned long currentMillis = millis();
 
@@ -147,10 +147,10 @@ void loop()
   bool sensor2Disabled = (currentMillis - disableTime2 < disableDuration);
 
   // Handle sensor 1
-  handleSensor(pirPin1, motionStatus1, pirState1, lastMotionTime1, disableTime2, sensor2Disabled, 1, "Sensor 1");
+  handleSensor(pirPin1, motionStatus1, pirState1, lastMotionTime1, sensor1Disabled, 1, "Sensor 1");
 
   // Handle sensor 2
-  handleSensor(pirPin2, motionStatus2, pirState2, lastMotionTime2, disableTime1, sensor1Disabled, -1, "Sensor 2");
+  handleSensor(pirPin2, motionStatus2, pirState2, lastMotionTime2, sensor2Disabled, -1, "Sensor 2");
 
   // Handle serial input for reset
   if (Serial.available() > 0)
